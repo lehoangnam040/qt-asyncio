@@ -8,7 +8,7 @@ import PySide2.QtCore
 import PySide2.QtWidgets
 
 from qtpy.QtCore import QCoreApplication, QObject, Qt, QThread, Signal, Slot
-from qtpy.QtWidgets import QApplication, QMainWindow, QWidget, QPushButton, QHBoxLayout, QLabel
+from qtpy.QtWidgets import QApplication, QMainWindow, QWidget, QPushButton, QHBoxLayout, QLabel, QVBoxLayout
 import uvloop
 from aiohttp import ClientSession
 
@@ -21,24 +21,31 @@ class MainApp(QMainWindow):
         self.asyncio_loop = loop
 
         self.qwidget = QWidget()
-        self.h_layout = QHBoxLayout(self.qwidget)
+        self.h_layout = QVBoxLayout(self.qwidget)
 
         self.button = QPushButton("Push here async")
         self.button.clicked.connect(self.on_clicked_button_async)
         self.button2 = QPushButton("Push here sync")
         self.button2.clicked.connect(self.on_clicked_button)
         self.label = QLabel("abcdef")
+
+        self.button3 = QPushButton("Test threadpool executor")
+        self.button3.clicked.connect(self.start_multiple_tasks)
+        self.button4 = QPushButton("Cancel threadpool executor")
+        self.button4.clicked.connect(self.cancel_multiple_tasks)
+
         self.h_layout.addWidget(self.label)
         self.h_layout.addWidget(self.button)
         self.h_layout.addWidget(self.button2)
+        self.h_layout.addWidget(self.button3)
+        self.h_layout.addWidget(self.button4)
         self.setCentralWidget(self.qwidget)
 
         self.count = 0
 
+
     @Slot()
     def on_clicked_button_async(self):
-
-        asyncio.run
         future = asyncio.run_coroutine_threadsafe(self.call_api(), self.asyncio_loop)
         future.add_done_callback(
             lambda futu: self.label.setText(futu.result())
@@ -71,6 +78,48 @@ class MainApp(QMainWindow):
     def on_clicked_button(self):
         self.count += 1
         self.label.setText(f"Count is: {self.count}")
+
+    async def fetch_status(self, session: ClientSession, url: str) -> int:
+        async with session.get(url) as response:
+            return response.status
+        
+    async def multitask_service(self):
+        async with ClientSession() as session:
+            self.fetchers = [
+                asyncio.create_task(self.fetch_status(session, f'http://httpbin.org/delay/{i}'))
+                for i in range(10)
+            ]
+            while True:
+                done, pending = await asyncio.wait(self.fetchers, timeout=2)
+                num_done = len(done)
+                num_pending = len(pending)
+                if num_done == 10:
+                    break
+
+                self.label.setText(f"done: {num_done}, pending: {num_pending}")
+        return "Finished all"
+    
+    async def cancel_service(self):
+        for _fetcher in self.fetchers:
+            if _fetcher.done():
+                continue
+            _fetcher.cancel()
+            try:
+                await _fetcher
+            except asyncio.CancelledError:
+                print("cancelled now")
+
+
+    @Slot()
+    def start_multiple_tasks(self):
+        future = asyncio.run_coroutine_threadsafe(self.multitask_service(), self.asyncio_loop)
+        future.add_done_callback(
+            lambda futu: self.label.setText(futu.result())
+        )
+
+    @Slot()
+    def cancel_multiple_tasks(self):
+        asyncio.run_coroutine_threadsafe(self.cancel_service(), self.asyncio_loop)
 
 
 def start_qt_ui(loop: asyncio.AbstractEventLoop) -> None:
